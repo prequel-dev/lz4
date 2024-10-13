@@ -192,7 +192,8 @@ func CompressionLevelOption(level CompressionLevel) Option {
 	}
 }
 
-func onBlockDone(int) {}
+func onBlockDone(int)         {}
+func onBlockDone2(int, int64) {}
 
 // OnBlockDoneOption is triggered when a block has been processed. For a Writer, it is when is has been compressed,
 // for a Reader, it is when it has been uncompressed.
@@ -206,12 +207,31 @@ func OnBlockDoneOption(handler func(size int)) Option {
 			s := fmt.Sprintf("OnBlockDoneOption(%s)", reflect.TypeOf(handler).String())
 			return lz4errors.Error(s)
 		case *Writer:
-			rw.handler = handler
+			rw.handler = func(dst int, src int64) {
+				handler(dst)
+			}
 			return nil
 		case *Reader:
 			rw.handler = handler
 			return nil
 		case *CompressingReader:
+			rw.handler = handler
+			return nil
+		}
+		return lz4errors.ErrOptionNotApplicable
+	}
+}
+
+func OnBlockDoneOption2(handler func(dstSz int, srcOffset int64)) Option {
+	if handler == nil {
+		handler = onBlockDone2
+	}
+	return func(a applier) error {
+		switch rw := a.(type) {
+		case nil:
+			s := fmt.Sprintf("OnBlockDoneOption2(%s)", reflect.TypeOf(handler).String())
+			return lz4errors.Error(s)
+		case *Writer:
 			rw.handler = handler
 			return nil
 		}

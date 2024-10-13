@@ -34,8 +34,9 @@ type Writer struct {
 	frame   *lz4stream.Frame          // frame being built
 	data    []byte                    // pending data
 	idx     int                       // size of pending data
-	handler func(int)
+	handler func(int, int64)
 	legacy  bool
+	srcOff  int64
 }
 
 func (*Writer) private() {}
@@ -121,10 +122,12 @@ func (w *Writer) Write(buf []byte) (n int, err error) {
 }
 
 func (w *Writer) write(data []byte, safe bool) error {
+	offset := w.srcOff
+	w.srcOff += int64(len(data))
 	if w.isNotConcurrent() {
 		block := w.frame.Blocks.Block
 		err := block.Compress(w.frame, data, w.level).Write(w.frame, w.src)
-		w.handler(len(block.Data))
+		w.handler(len(block.Data), offset)
 		return err
 	}
 	c := make(chan *lz4stream.FrameDataBlock)
@@ -133,7 +136,7 @@ func (w *Writer) write(data []byte, safe bool) error {
 		b := lz4stream.NewFrameDataBlock(w.frame)
 		c <- b.Compress(w.frame, data, w.level)
 		<-c
-		w.handler(len(b.Data))
+		w.handler(len(b.Data), offset)
 		b.Close(w.frame)
 		if safe {
 			// safe to put it back as the last usage of it was FrameDataBlock.Write() called before c is closed
@@ -226,12 +229,13 @@ func (w *Writer) ReadFrom(r io.Reader) (n int64, err error) {
 		default:
 			return
 		}
-		n += int64(rn)
 		err = w.write(data[:rn], true)
 		if err != nil {
+			n += int64(rn)
 			return
 		}
-		w.handler(rn)
+		w.handler(rn, n)
+		n += int64(rn)
 		if !done && !w.isNotConcurrent() {
 			// The buffer will be returned automatically by go routines (safe=true)
 			// so get a new one fo the next round.
