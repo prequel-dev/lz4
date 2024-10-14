@@ -147,6 +147,26 @@ func (w *Writer) write(data []byte, safe bool) error {
 	return nil
 }
 
+func (w *Writer) writeWait(data []byte, safe bool) error {
+	offset := w.srcOff
+	w.srcOff += int64(len(data))
+
+	c := make(chan *lz4stream.FrameDataBlock)
+	w.frame.Blocks.Blocks <- c
+
+	b := lz4stream.NewFrameDataBlock(w.frame)
+	c <- b.Compress(w.frame, data, w.level)
+	<-c
+	w.handler(len(b.Data), offset)
+	b.Close(w.frame)
+	if safe {
+		// safe to put it back as the last usage of it was FrameDataBlock.Write() called before c is closed
+		lz4block.Put(data)
+	}
+
+	return nil
+}
+
 // Flush any buffered data to the underlying writer immediately.
 func (w *Writer) Flush() (err error) {
 	switch w.state.state {
@@ -164,6 +184,34 @@ func (w *Writer) Flush() (err error) {
 	if w.idx > 0 {
 		// Flush pending data, disable w.data freeing as it is done later on.
 		if err = w.write(w.data[:w.idx], false); err != nil {
+			return err
+		}
+		w.idx = 0
+	}
+	return nil
+}
+
+// Flush any buffered data to the underlying writer immediately.
+func (w *Writer) FlushWait() (err error) {
+	if w.isNotConcurrent() {
+		return w.Flush()
+	}
+
+	switch w.state.state {
+	case writeState:
+	case errorState:
+		return w.state.err
+	case newState:
+		if err = w.init(); w.state.next(err) {
+			return
+		}
+	default:
+		return nil
+	}
+
+	if w.idx > 0 {
+		// Flush pending data, disable w.data freeing as it is done later on.
+		if err = w.writeWait(w.data[:w.idx], false); err != nil {
 			return err
 		}
 		w.idx = 0
