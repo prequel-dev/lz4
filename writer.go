@@ -127,7 +127,7 @@ func (w *Writer) write(data []byte, safe bool) error {
 	if w.isNotConcurrent() {
 		block := w.frame.Blocks.Block
 		err := block.Compress(w.frame, data, w.level).Write(w.frame, w.src)
-		w.handler(len(block.Data), offset)
+		w.handler(len(block.Data), w.srcOff)
 		return err
 	}
 	c := make(chan *lz4stream.FrameDataBlock)
@@ -136,7 +136,7 @@ func (w *Writer) write(data []byte, safe bool) error {
 		b := lz4stream.NewFrameDataBlock(w.frame)
 		c <- b.Compress(w.frame, data, w.level)
 		<-c
-		w.handler(len(b.Data), offset)
+		w.handler(len(b.Data), offset+int64(len(data)))
 		b.Close(w.frame)
 		if safe {
 			// safe to put it back as the last usage of it was FrameDataBlock.Write() called before c is closed
@@ -148,7 +148,6 @@ func (w *Writer) write(data []byte, safe bool) error {
 }
 
 func (w *Writer) writeWait(data []byte, safe bool) error {
-	offset := w.srcOff
 	w.srcOff += int64(len(data))
 
 	c := make(chan *lz4stream.FrameDataBlock)
@@ -157,7 +156,7 @@ func (w *Writer) writeWait(data []byte, safe bool) error {
 	b := lz4stream.NewFrameDataBlock(w.frame)
 	c <- b.Compress(w.frame, data, w.level)
 	<-c
-	w.handler(len(b.Data), offset)
+	w.handler(len(b.Data), w.srcOff)
 	b.Close(w.frame)
 	if safe {
 		// safe to put it back as the last usage of it was FrameDataBlock.Write() called before c is closed
@@ -278,12 +277,12 @@ func (w *Writer) ReadFrom(r io.Reader) (n int64, err error) {
 			return
 		}
 		err = w.write(data[:rn], true)
+		n += int64(rn)
 		if err != nil {
-			n += int64(rn)
 			return
 		}
 		w.handler(rn, n)
-		n += int64(rn)
+
 		if !done && !w.isNotConcurrent() {
 			// The buffer will be returned automatically by go routines (safe=true)
 			// so get a new one fo the next round.
