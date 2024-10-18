@@ -50,6 +50,9 @@ func (b *Blocks) initW(f *Frame, dst io.Writer, num int) {
 					// Keep the first error.
 					b.err = err
 					// All pending compression goroutines need to shut down, so we need to keep going.
+				} else if block.Handler != nil {
+					// Force the handler inline with the write so they come back in order
+					block.Handler(len(block.Data))
 				}
 			}
 			close(c)
@@ -205,6 +208,7 @@ type FrameDataBlock struct {
 	data     []byte // buffer for compressed data
 	src      []byte // uncompressed data
 	err      error  // used in concurrent mode
+	Handler  func(sz int)
 }
 
 func (b *FrameDataBlock) Close(f *Frame) {

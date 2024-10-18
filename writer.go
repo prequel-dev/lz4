@@ -122,21 +122,21 @@ func (w *Writer) Write(buf []byte) (n int, err error) {
 }
 
 func (w *Writer) write(data []byte, safe bool) error {
-	offset := w.srcOff
 	w.srcOff += int64(len(data))
+	srcOffset := w.srcOff
 	if w.isNotConcurrent() {
 		block := w.frame.Blocks.Block
 		err := block.Compress(w.frame, data, w.level).Write(w.frame, w.src)
-		w.handler(len(block.Data), w.srcOff)
+		w.handler(len(block.Data), srcOffset)
 		return err
 	}
 	c := make(chan *lz4stream.FrameDataBlock)
 	w.frame.Blocks.Blocks <- c
 	go func(c chan *lz4stream.FrameDataBlock, data []byte, safe bool) {
 		b := lz4stream.NewFrameDataBlock(w.frame)
+		b.Handler = func(sz int) { w.handler(sz, srcOffset) }
 		c <- b.Compress(w.frame, data, w.level)
 		<-c
-		w.handler(len(b.Data), offset+int64(len(data)))
 		b.Close(w.frame)
 		if safe {
 			// safe to put it back as the last usage of it was FrameDataBlock.Write() called before c is closed
